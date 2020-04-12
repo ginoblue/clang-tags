@@ -1,7 +1,7 @@
 #define _GNU_SOURCE
 
 #include "clang-c/Index.h"
-
+#include "clang-c/CXCompilationDatabase.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
@@ -16,6 +16,10 @@
 #include <getopt.h>
 #include <dirent.h>
 #include <regex.h>
+#include <iostream>  
+#include <fstream>  
+
+using namespace std;  
 
 typedef struct {
    CXFile     *source_file;
@@ -299,14 +303,65 @@ static struct option long_options[] = {
    {0, 0, 0, 0}
 };
 
+static int parse_for_db(const char *path, const char *src_files_list_file) {
+	CXCompilationDatabase_Error err;
+	int ret = 0;
+	CXCompileCommands cmd = NULL;
+	CXCompilationDatabase db = NULL;
+	
+	db = clang_CompilationDatabase_fromDirectory(path, &err);
+	if (err){
+		ret = (int)err;
+		printf("%s:%d err:%d\n", __FILE__, __LINE__, ret);
+		goto done;
+	}
+	
+	ifstream ifs(src_files_list_file);  
+  string src_file;  
+  int i = 0;  
+  while(getline(ifs, src_file))  {     
+  	printf("parse: %s\n", src_file.c_str());  
+		cmd = clang_CompilationDatabase_getCompileCommands(db, src_file.c_str());
+		if (!cmd){
+			ret = 1;
+			printf("%s:%d err:%d %s\n", __FILE__, __LINE__, ret, files[i]);
+			goto done;
+		}
+		unsigned int num_args = clang_CompileCommand_getNumArgs(cmd);
+		CXString args = clang_CompileCommand_getArg(cmd);
+		CXIndex = NULL;
+		CXTranslationUnit *unit = clang_parseTranslationUnit(
+			CXIndex, NULL, num_args, 0, NULL, 64);
+			
+		clang_disposeString(args);
+		if (unit == NULL){
+			ret = 1;
+			printf("%s:%d err:%d %s\n", __FILE__, __LINE__, ret, src_file.c_str());
+			goto done;
+		}
+		clang_CompileCommands_dispose(cmd);
+	}
+	
+	
+	//clang_CompilationDatabase_getCompileCommands()			
+done:
+	if (cmd){
+		clang_CompileCommands_dispose(cmd);
+	}
+	if (db){
+		clang_CompilationDatabase_dispose(db);
+	}
+	return ret;
+}
 int main(int argc, char **argv)
 {
    const size_t max_clang_args = 64;
    int clang_argc = 0;
    char **clang_argv = malloc(sizeof(char*) * max_clang_args);
    assert(clang_argv != NULL);
-   
-   const char *spec = "I:x:";
+   char db_path[255] = {0};
+   char src_files_list_file[255] = {0};
+   const char *spec = "I:x:d:s:";
    int c, failure = 0;
    while ((c = getopt_long(argc, argv, spec, long_options, NULL)) != -1) {
       switch (c) {
@@ -324,6 +379,14 @@ int main(int argc, char **argv)
             clang_argv[clang_argc++] = optarg;
          }
          break;
+      case 'd':
+         strcpy(db_path, optarg);
+         printf("db_path: %s\n", db_path);
+         break;
+       case 's':
+         strcpy(src_files_list_file, optarg);
+         printf("src_files_list_file: %s\n", src_files_list_file);
+         break;
       case '?':
          failure = 1;
          break;
@@ -334,6 +397,9 @@ int main(int argc, char **argv)
    if (failure)
       return EXIT_FAILURE;
 
+	 if (db_path[0] && src_files_list_file[0]){
+	 		return parse_for_db(db_path, src_files_list_file);
+	 }
    output = fopen("TAGS", "w");
    if (output == NULL) {
       fprintf(stderr, "failed to open TAGS for writing\n");
